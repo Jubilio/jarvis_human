@@ -1,31 +1,41 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  Mic, Send, Activity, ShieldAlert, Wind, HardDrive,
+  Mic, MicOff, Send, Activity, ShieldAlert, Wind, HardDrive,
   Home, Map as MapIcon, Target, FileText, BarChart2, Settings,
-  Hexagon, Terminal, Thermometer, Droplets, Brain
+  Hexagon, Terminal, Droplets, Brain, Radio
 } from 'lucide-react';
 
 const API = 'http://127.0.0.1:8000';
+const WAKE_WORDS = ['jarvis', 'jarvis,', 'ativado', 'ei jarvis', 'hey jarvis'];
 
 function App() {
   const [time, setTime] = useState(new Date());
   const [isThinking, setIsThinking] = useState(false);
-  const [isListening, setIsListening] = useState(false);
+  const [isListening, setIsListening] = useState(false);      // Ouvindo comando
+  const [isWakeMode, setIsWakeMode] = useState(false);         // Aguardando wake word
+  const [wakeDetected, setWakeDetected] = useState(false);    // Flash ao detectar "Jarvis"
   const [input, setInput] = useState('');
   const [chatLog, setChatLog] = useState([
-    { role: 'jarvis', msg: 'SISTEMAS ONLINE. UPLINK NEURAL ESTABELECIDO. MEMÓRIA PERSISTENTE ACTIVA. AGENTES ONLINE.', mode: 'system', tools: [] }
+    { role: 'jarvis', msg: 'SISTEMAS ONLINE. AGENTES ACTIVOS. Diga "JARVIS" para me activar por voz.', mode: 'system', tools: [] }
   ]);
   const [weather, setWeather] = useState(null);
   const [memoryCount, setMemoryCount] = useState(0);
   const [activeMode, setActiveMode] = useState('STANDBY');
   const chatEndRef = useRef(null);
+  const wakeRecognitionRef = useRef(null);
+  const commandRecognitionRef = useRef(null);
 
-  // Relógio
+  // Relógio + iniciar wake word listener
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
     window.speechSynthesis.getVoices();
-    return () => clearInterval(timer);
+    // Iniciar listener de wake word automaticamente
+    startWakeWordListener();
+    return () => {
+      clearInterval(timer);
+      stopWakeWordListener();
+    };
   }, []);
 
   // Buscar dados reais ao iniciar
@@ -66,24 +76,91 @@ function App() {
     const voices = window.speechSynthesis.getVoices();
     const ptVoice = voices.find(v => v.lang === 'pt-BR' && v.name.includes('Google')) || voices.find(v => v.lang.includes('pt-BR'));
     if (ptVoice) utterance.voice = ptVoice;
+    // Pausar wake word listener durante a fala para evitar eco
+    utterance.onstart = () => stopWakeWordListener();
+    utterance.onend = () => setTimeout(startWakeWordListener, 800);
     window.speechSynthesis.speak(utterance);
   };
 
-  const startListening = () => {
+  // === WAKE WORD LISTENER (Escuta contínua em background) ===
+  const startWakeWordListener = useCallback(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) { alert("Use Google Chrome ou Edge."); return; }
+    if (!SpeechRecognition) return;
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'pt-BR';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    wakeRecognitionRef.current = recognition;
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript.toLowerCase().trim();
+      const detected = WAKE_WORDS.some(w => transcript.includes(w));
+      if (detected) {
+        // Wake word detectada!
+        setWakeDetected(true);
+        setTimeout(() => setWakeDetected(false), 2000);
+        speak("Sim, Mestre. Pode falar.");
+        setTimeout(() => startCommandListening(), 1500);
+      }
+    };
+
+    recognition.onend = () => {
+      // Reiniciar automaticamente para escuta contínua
+      if (wakeRecognitionRef.current === recognition) {
+        try { recognition.start(); } catch(e) {}
+      }
+    };
+
+    recognition.onerror = (e) => {
+      if (e.error === 'no-speech' || e.error === 'aborted') {
+        try { recognition.start(); } catch(err) {}
+      }
+    };
+
+    setIsWakeMode(true);
+    try { recognition.start(); } catch(e) {}
+  }, []);
+
+  const stopWakeWordListener = () => {
+    setIsWakeMode(false);
+    if (wakeRecognitionRef.current) {
+      const r = wakeRecognitionRef.current;
+      wakeRecognitionRef.current = null;
+      try { r.stop(); } catch(e) {}
+    }
+  };
+
+  // === COMMAND LISTENER (Activa após wake word) ===
+  const startCommandListening = () => {
+    stopWakeWordListener();
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
     const recognition = new SpeechRecognition();
     recognition.lang = 'pt-BR';
     recognition.interimResults = false;
+    commandRecognitionRef.current = recognition;
     setIsListening(true);
-    setInput('Capturando diretriz...');
+    setInput('Aguardando comando...');
     recognition.onresult = (event) => {
       const transcript = event.results[0][0].transcript;
       setInput(transcript);
       handleCommand(transcript);
     };
-    recognition.onend = () => { setIsListening(false); };
+    recognition.onend = () => {
+      setIsListening(false);
+      setInput('');
+      // Volta ao modo de escuta de wake word
+      setTimeout(startWakeWordListener, 1000);
+    };
     recognition.start();
+  };
+
+  // === BOTÃO DO MICROFONE (manual) ===
+  const startListening = () => {
+    if (isListening) return;
+    stopWakeWordListener();
+    startCommandListening();
   };
 
   const handleCommand = async (overrideInput = null) => {
@@ -161,9 +238,25 @@ function App() {
             </span>
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-3xl font-light tracking-[0.1em] text-cyan-100">{formatTime(time)}</div>
-          <div className="text-xs tracking-widest text-cyan-600 mt-1 font-bold">{formatDate(time)}</div>
+        <div className="flex items-start gap-8">
+          <div className="text-right">
+            <div className="text-3xl font-light tracking-[0.1em] text-cyan-100">{formatTime(time)}</div>
+            <div className="text-xs tracking-widest text-cyan-600 mt-1 font-bold">{formatDate(time)}</div>
+          </div>
+          {/* Controlos da janela Electron (só aparecem no desktop) */}
+          {window.electronAPI && (
+            <div className="flex gap-2 mt-1 pointer-events-auto" style={{ WebkitAppRegion: 'no-drag' }}>
+              <button onClick={() => window.electronAPI.minimizeWindow()}
+                className="w-4 h-4 rounded-full bg-yellow-400/80 hover:bg-yellow-300 transition-colors shadow-[0_0_6px_rgba(255,200,0,0.5)]" 
+                title="Minimizar" />
+              <button onClick={() => window.electronAPI.maximizeWindow()}
+                className="w-4 h-4 rounded-full bg-green-400/80 hover:bg-green-300 transition-colors shadow-[0_0_6px_rgba(0,255,0,0.5)]"
+                title="Maximizar" />
+              <button onClick={() => window.electronAPI.closeWindow()}
+                className="w-4 h-4 rounded-full bg-red-500/80 hover:bg-red-400 transition-colors shadow-[0_0_6px_rgba(255,0,0,0.5)]"
+                title="Fechar" />
+            </div>
+          )}
         </div>
       </header>
 
@@ -249,7 +342,7 @@ function App() {
           {/* Robot image */}
           <div className="absolute bottom-[8%] h-[84%] flex items-end justify-center pointer-events-auto z-10">
             <img src="/hologram.png" alt="Hologram AI"
-              className={`hologram-image max-h-full object-contain transition-all duration-700 ${isThinking||isListening ? 'brightness-[1.6] scale-[1.02]' : ''}`}
+              className={`hologram-image max-h-full object-contain transition-all duration-700 ${isThinking||isListening ? 'brightness-[1.6] scale-[1.02]' : wakeDetected ? 'brightness-[2] scale-[1.05] drop-shadow-[0_0_60px_rgba(0,243,255,1)]' : ''}`}
               onError={(e) => {
                 e.target.style.display = 'none';
                 e.target.parentElement.innerHTML = `
@@ -387,6 +480,24 @@ function App() {
 
       {/* FOOTER */}
       <footer className="absolute bottom-0 w-full px-8 pb-6 flex flex-col items-center gap-6 z-30 pointer-events-none">
+        {/* Wake Word Status */}
+        <div className="h-6 flex items-center justify-center pointer-events-none">
+          <AnimatePresence>
+            {wakeDetected && (
+              <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
+                className="text-sm font-bold tracking-widest text-white drop-shadow-[0_0_15px_rgba(0,243,255,1)]">
+                ⚡ PALAVRA-CHAVE DETECTADA — PODE FALAR
+              </motion.div>
+            )}
+            {isWakeMode && !isListening && !wakeDetected && (
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                className="flex items-center gap-2 text-[9px] text-cyan-700 tracking-widest font-bold">
+                <Radio className="w-3 h-3 animate-pulse text-cyan-600" />
+                AGUARDANDO PALAVRA DE ACTIVAÇÃO: <span className="text-cyan-500 ml-1">"JARVIS"</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
         {/* Input */}
         <div className="w-[750px] relative pointer-events-auto group">
           <div className="absolute inset-0 bg-cyan-900/20 blur-xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity"></div>
@@ -400,8 +511,13 @@ function App() {
             />
             <div className="flex gap-1 pr-3">
               <button onClick={startListening}
-                className={`p-2.5 rounded-full transition-all ${isListening ? 'text-white bg-red-500/40 shadow-[0_0_12px_red]' : 'text-cyan-700 hover:text-cyan-300 hover:bg-cyan-900/30'}`}>
-                <Mic className="w-4 h-4" />
+                title={isWakeMode ? 'Escuta wake word activa' : 'Clicar para comandar'}
+                className={`p-2.5 rounded-full transition-all ${
+                  isListening ? 'text-white bg-red-500/40 shadow-[0_0_12px_red] animate-pulse' 
+                  : isWakeMode ? 'text-cyan-400 bg-cyan-900/30 shadow-[0_0_8px_rgba(0,243,255,0.4)] animate-pulse' 
+                  : 'text-cyan-700 hover:text-cyan-300 hover:bg-cyan-900/30'
+                }`}>
+                {isWakeMode && !isListening ? <Radio className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
               </button>
               <button onClick={handleCommand} disabled={isThinking || isListening}
                 className="p-2.5 text-cyan-600 hover:text-white hover:bg-cyan-500/20 rounded-full transition-all disabled:opacity-30">
