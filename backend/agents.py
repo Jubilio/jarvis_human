@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from langchain_ollama import ChatOllama
-from langchain.agents import AgentExecutor, create_react_agent
+from langchain_classic.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import tool
 from langchain_community.tools import DuckDuckGoSearchRun

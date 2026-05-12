@@ -1,6 +1,6 @@
-import os
 import httpx
 import chromadb
+from typing import Optional
 from datetime import datetime
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,6 +33,8 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     message: str
+    lat: Optional[float] = None
+    lon: Optional[float] = None
 
 # ============================================================
 # UTILITÁRIOS
@@ -63,13 +65,13 @@ async def get_weather(lat: float = -25.97, lon: float = 32.57) -> dict:
         f"https://api.open-meteo.com/v1/forecast?"
         f"latitude={lat}&longitude={lon}"
         f"&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code"
-        f"&timezone=Africa%2FMaputo"
     )
     async with httpx.AsyncClient(timeout=10) as hclient:
         resp = await hclient.get(url)
-        current = resp.json().get("current", {})
+        data = resp.json()
+        current = data.get("current", {})
         return {
-            "city": "Maputo",
+            "city": "Localização Atual" if lat != -25.97 else "Maputo",
             "temperature": current.get("temperature_2m", "N/A"),
             "humidity": current.get("relative_humidity_2m", "N/A"),
             "wind_speed": current.get("wind_speed_10m", "N/A"),
@@ -95,13 +97,13 @@ def read_root():
     return {"status": "online", "system": "Jarvis OS", "version": "3.0.0", "agents": "active"}
 
 @app.get("/api/weather")
-async def weather_endpoint():
+async def weather_endpoint(lat: float = -25.97, lon: float = 32.57):
     try:
-        data = await get_weather()
+        data = await get_weather(lat, lon)
         data["condition"] = weather_code_to_label(data["weather_code"])
         return data
     except Exception as e:
-        return {"error": str(e), "city": "Maputo", "temperature": "N/A"}
+        return {"error": str(e), "city": "Desconhecida", "temperature": "N/A"}
 
 @app.get("/api/memory")
 def get_memory_stats():
@@ -111,17 +113,19 @@ def get_memory_stats():
 @app.post("/api/chat")
 async def chat_with_jarvis(request: ChatRequest):
     user_message = request.message
+    lat = request.lat
+    lon = request.lon
     action = "none"
     if any(kw in user_message.lower() for kw in ["mapa", "inundação", "gis", "satélite"]):
         action = "render_flood_map"
 
     # === ROTA INTELIGENTE: Agente ou Chat Simples? ===
     if needs_agent(user_message):
-        return await run_agent(user_message, action)
+        return await run_agent(user_message, action, lat, lon)
     else:
-        return await run_simple_chat(user_message, action)
+        return await run_simple_chat(user_message, action, lat, lon)
 
-async def run_agent(user_message: str, action: str) -> dict:
+async def run_agent(user_message: str, action: str, lat: float = None, lon: float = None) -> dict:
     """Executa o agente LangChain com ferramentas reais."""
     try:
         past_context = recall_memory(user_message, n=2)
@@ -165,14 +169,14 @@ async def run_agent(user_message: str, action: str) -> dict:
             "tools_used": []
         }
 
-async def run_simple_chat(user_message: str, action: str) -> dict:
+async def run_simple_chat(user_message: str, action: str, lat: float = None, lon: float = None) -> dict:
     """Chat simples e rápido via OpenAI SDK → Ollama."""
     past_context = recall_memory(user_message, n=3)
     memory_section = f"\n\nMemórias de conversas anteriores:\n{past_context}" if past_context else ""
 
     try:
-        weather = await get_weather()
-        weather_ctx = f"Clima actual em Maputo: {weather['temperature']}°C, Humidade: {weather['humidity']}%, Vento: {weather['wind_speed']} km/h."
+        weather = await get_weather(lat, lon) if lat and lon else await get_weather()
+        weather_ctx = f"Clima actual no local do Mestre: {weather['temperature']}°C, Humidade: {weather['humidity']}%, Vento: {weather['wind_speed']}."
     except:
         weather_ctx = ""
 
