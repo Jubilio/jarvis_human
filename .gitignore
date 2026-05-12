@@ -1,0 +1,19 @@
+# Arquivos de ambiente
+.env
+.env.*
+
+# Python / Backend
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Frontend (embora já tenha seu próprio .gitignore)
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# OS
+.DS_Store
+Thumbs.db
