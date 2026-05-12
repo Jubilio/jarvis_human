@@ -3,6 +3,18 @@ uvicorn
 pydantic
 python-dotenv
 openai
+httpx
+# Memória persistente
+chromadb
+# LangChain + Agentes
+langchain
+langchain-ollama
+langchain-community
+# Ferramentas
+duckduckgo-search
+pypdf
+openpyxl
+python-docx
+reportlab
 # Futuras integrações
-# langchain
 # earthengine-api
