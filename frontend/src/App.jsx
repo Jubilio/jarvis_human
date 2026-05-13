@@ -183,12 +183,6 @@ function App() {
     setChatLog(prev => [...prev, { role: 'user', msg: cmd }]);
     setIsThinking(true);
     try {
-      let coords = { lat: null, lon: null };
-      if (weather && weather.city !== 'Maputo') {
-        // Se já temos clima carregado, usamos essas coordenadas (vêm da geolocalização inicial)
-        // No entanto, para ser mais preciso, pegamos na hora
-      }
-      
       const response = await fetch(`${API}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -198,23 +192,69 @@ function App() {
           lon: weather?.lon || null
         })
       });
-      const data = await response.json();
-      setActiveMode(data.mode === 'agent' ? 'AGENTE' : 'CHAT');
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullReply = '';
+      
+      // Criar entrada vazia do Jarvis no log
       setChatLog(prev => [...prev, {
         role: 'jarvis',
-        msg: data.reply,
-        mode: data.mode,
-        tools: data.tools_used || []
+        msg: '',
+        mode: 'chat',
+        tools: []
       }]);
-      speak(data.reply);
-      setMemoryCount(prev => prev + 1);
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.error) throw new Error(data.error);
+              if (data.done) {
+                speak(fullReply);
+                setMemoryCount(prev => prev + 1);
+                continue;
+              }
+
+              // Se for um agente (resposta completa de uma vez)
+              if (data.reply) {
+                fullReply = data.reply;
+                setActiveMode(data.mode === 'agent' ? 'AGENTE' : 'CHAT');
+              } else if (data.token) {
+                fullReply += data.token;
+              }
+
+              // Atualizar o último item do log
+              setChatLog(prev => {
+                const newLog = [...prev];
+                const last = newLog[newLog.length - 1];
+                last.msg = fullReply;
+                last.mode = data.mode || last.mode;
+                last.tools = data.tools_used || last.tools;
+                return newLog;
+              });
+
+            } catch (e) {
+              console.error('Erro no stream:', e);
+            }
+          }
+        }
+      }
+      setIsThinking(false);
+      setTimeout(() => setActiveMode('STANDBY'), 3000);
     } catch (e) {
       const err = 'FALHA CRÍTICA: UPLINK NEURAL OFFLINE.';
       setChatLog(prev => [...prev, { role: 'jarvis', msg: err, mode: 'error', tools: [] }]);
       speak(err);
-    } finally {
       setIsThinking(false);
-      setTimeout(() => setActiveMode('STANDBY'), 3000);
     }
   };
 

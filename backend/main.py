@@ -5,7 +5,7 @@ from datetime import datetime
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from openai import AsyncOpenAI
 
@@ -148,11 +148,16 @@ async def chat_with_jarvis(request: ChatRequest):
     if any(kw in user_message.lower() for kw in ["mapa", "inundação", "gis", "satélite"]):
         action = "render_flood_map"
 
-    # === ROTA INTELIGENTE: Agente ou Chat Simples? ===
+    # === ROTA INTELIGENTE ===
     if needs_agent(user_message):
-        return await run_agent(user_message, action, lat, lon)
+        # Agentes ainda não suportam streaming completo de forma simples aqui, 
+        # mas retornaremos a resposta final como stream de um único bloco.
+        async def agent_stream():
+            res = await run_agent(user_message, action, lat, lon)
+            yield f"data: {json.dumps(res)}\n\n"
+        return StreamingResponse(agent_stream(), media_type="text/event-stream")
     else:
-        return await run_simple_chat(user_message, action, lat, lon)
+        return StreamingResponse(run_simple_chat_stream(user_message, action, lat, lon), media_type="text-event-stream")
 
 async def run_agent(user_message: str, action: str, lat: float = None, lon: float = None) -> dict:
     """Executa o agente LangChain com ferramentas reais."""
@@ -162,7 +167,7 @@ async def run_agent(user_message: str, action: str, lat: float = None, lon: floa
         if past_context:
             full_query = f"{user_message}\n\n[Contexto de conversas anteriores]:\n{past_context}"
         
-        # O agente corre de forma síncrona (LangChain ainda não é totalmente async com Ollama)
+        # O agente corre de forma síncrona
         import asyncio
         loop = asyncio.get_event_loop()
         agent = create_jarvis_agent()
@@ -176,7 +181,7 @@ async def run_agent(user_message: str, action: str, lat: float = None, lon: floa
         
         reply = result.get("output", "Não consegui processar a solicitação.")
         
-        # Extrair ferramentas utilizadas dos passos intermédios
+        # Extrair ferramentas utilizadas
         tools_used = []
         for step in result.get("intermediate_steps", []):
             if step and len(step) > 0:
@@ -194,57 +199,59 @@ async def run_agent(user_message: str, action: str, lat: float = None, lon: floa
         }
     except Exception as e:
         return {
-            "reply": f"Erro no sistema de agentes: {str(e)}. Verifique se o Ollama está activo.",
+            "reply": f"Erro no sistema de agentes: {str(e)}",
             "action": "none",
             "mode": "agent_error",
             "tools_used": []
         }
 
-async def run_simple_chat(user_message: str, action: str, lat: float = None, lon: float = None) -> dict:
-    """Chat simples e rápido via OpenAI SDK → Ollama."""
+async def run_simple_chat_stream(user_message: str, action: str, lat: float = None, lon: float = None):
+    """Chat com streaming para resposta instantânea."""
     past_context = recall_memory(user_message, n=3)
     memory_section = f"\n\n[MEMÓRIAS RELEVANTES]:\n{past_context}" if past_context else ""
 
     weather_ctx = ""
-    # Busca clima apenas se relevante
     weather_keywords = ["tempo", "clima", "temperatura", "calor", "frio", "chuva", "hoje", "agora", "olá", "oi", "bom dia"]
     if any(kw in user_message.lower() for kw in weather_keywords):
         try:
-            print(f"--- Contexto Relevante: Buscando clima para lat={lat}, lon={lon} ---")
             weather = await get_weather(lat, lon) if lat and lon else await get_weather()
-            weather_ctx = f"\n[CLIMA ATUAL]: {weather['temperature']}°C, {weather['humidity']}% Humidade, Vento {weather['wind_speed']}km/h."
-            print(f"--- Clima obtido: {weather['temperature']}°C ---")
-        except Exception as e:
-            print(f"--- Erro ao buscar clima: {str(e)} ---")
+            weather_ctx = f"\n[CLIMA ATUAL]: {weather['temperature']}°C, {weather['humidity']}% Humidade."
+        except: pass
 
     system_prompt = (
-        "Você é o J.A.R.V.I.S., um assistente de IA ultra avançado. "
-        "Responda de forma concisa e inteligente. Chame o utilizador de 'Mestre'.\n\n"
-        "INSTRUÇÃO CRÍTICA: Use as informações abaixo APENAS se forem diretamente relacionadas à pergunta do Mestre. "
-        "Se a pergunta for sobre um assunto novo, ignore o contexto de memória e clima.\n"
+        "Você é o J.A.R.V.I.S., um assistente de IA ultra avançado. Responda de forma concisa. "
+        "Chame o utilizador de 'Mestre'. Use os dados abaixo apenas se relevantes.\n"
         f"{weather_ctx}{memory_section}"
     )
 
+    full_reply = ""
     try:
-        print(f"--- Enviando prompt para Ollama (llama3)... ---")
         response = await client.chat.completions.create(
             model="llama3:latest",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
             ],
-            max_tokens=400,
+            stream=True,
+            max_tokens=600,
             temperature=0.7
         )
-        reply = response.choices[0].message.content
-        print(f"--- Resposta do Ollama recebida ({len(reply)} chars) ---")
-        save_to_memory(user_message, reply)
-        return {"reply": reply, "action": action, "mode": "chat", "tools_used": []}
+
+        async for chunk in response:
+            content = chunk.choices[0].delta.content or ""
+            if content:
+                full_reply += content
+                # Enviamos em formato SSE (Server-Sent Events)
+                yield f"data: {json.dumps({'token': content, 'mode': 'chat', 'action': action})}\n\n"
+        
+        save_to_memory(user_message, full_reply)
+        # Sinal de finalização
+        yield f"data: {json.dumps({'done': True})}\n\n"
+        
     except Exception as e:
         error_msg = str(e)
         if "connection" in error_msg.lower() or "refused" in error_msg.lower():
-            return {
-                "reply": "Falha na conexão com o núcleo neural local. Verifique se o Ollama está em execução.",
-                "action": "none", "mode": "error", "tools_used": []
-            }
-        return {"reply": f"Erro no sistema: {error_msg}", "action": "none", "mode": "error", "tools_used": []}
+            err_data = {"token": "Falha na conexão com o núcleo neural local. Verifique se o Ollama está activo.", "mode": "error"}
+        else:
+            err_data = {"token": f"Erro no sistema: {error_msg}", "mode": "error"}
+        yield f"data: {json.dumps(err_data)}\n\n"
