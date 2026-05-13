@@ -239,7 +239,7 @@ Thought: {agent_scratchpad}
 
 def create_jarvis_agent() -> AgentExecutor:
     """Instancia e retorna o agente executor do Jarvis."""
-    llm = ChatOllama(model="llama3", temperature=0.3)
+    llm = ChatOllama(model="llama3:latest", temperature=0.3)
     agent = create_react_agent(llm, TOOLS, AGENT_PROMPT)
     executor = AgentExecutor(
         agent=agent,

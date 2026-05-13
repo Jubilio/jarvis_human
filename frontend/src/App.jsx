@@ -283,14 +283,17 @@ function App() {
         </div>
       </header>
 
-      {/* MAIN GRID */}
-      <main className="flex-1 w-full h-full px-4 lg:px-8 pt-24 lg:pt-28 pb-40 lg:pb-32 grid grid-cols-1 lg:grid-cols-12 gap-6 z-10 relative overflow-y-auto lg:overflow-hidden custom-scrollbar">
+      {/* MAIN HUD GRID */}
+      <main className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 p-4 lg:p-8 overflow-hidden relative z-10">
         
-        {/* LEFT COLUMN (Status, Voz, Memória) */}
-        <div className="order-2 lg:order-1 col-span-1 lg:col-span-3 flex flex-col gap-5">
-
-          {/* Status */}
-          <div className="panel p-5 flex-1 min-h-[160px]">
+        {/* LEFT COLUMN */}
+        <div className="order-2 lg:order-1 col-span-1 lg:col-span-3 flex flex-col gap-4 lg:gap-6 overflow-y-auto no-scrollbar max-h-full pb-32 lg:pb-0">
+          
+          {/* Canal Neural */}
+          <motion.div 
+            initial={{ x: -50, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.2 }}
+            className="bg-black/40 backdrop-blur-md border border-cyan-500/20 p-4 rounded-xl relative overflow-hidden group h-fit lg:h-auto"
+          >
             <PanelTitle title="Status do Sistema" />
             <div className="flex flex-col items-center justify-center py-4 relative">
               <svg className="w-20 h-20 lg:w-24 lg:h-24 transform -rotate-90 drop-shadow-[0_0_10px_rgba(0,243,255,0.4)]">
@@ -303,7 +306,7 @@ function App() {
                 <span className="text-[8px] lg:text-[10px] text-cyan-500 font-bold mt-1">100%</span>
               </div>
             </div>
-          </div>
+          </motion.div>
 
           {/* Voz */}
           <div className="panel p-5 flex-1 min-h-[140px]">
@@ -397,7 +400,7 @@ function App() {
         </div>
 
         {/* RIGHT COLUMN (Monitoramento, Clima, Agentes) */}
-        <div className="order-3 lg:order-3 col-span-1 lg:col-span-3 flex flex-col gap-5 z-20">
+        <div className="order-3 lg:order-3 col-span-1 lg:col-span-3 flex flex-col gap-5 z-20 overflow-y-auto no-scrollbar max-h-full pb-32 lg:pb-0">
 
           {/* Mapa Global */}
           <div className="panel p-5 flex-1 relative overflow-hidden">
@@ -466,10 +469,13 @@ function App() {
             </div>
           </div>
 
-          {/* Agentes */}
-          <div className="panel p-5 flex-1 min-h-[140px]">
+          {/* Agentes Activos */}
+          <motion.div
+            initial={{ x: 50, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.6 }}
+            className="bg-black/40 backdrop-blur-md border border-cyan-500/20 p-4 rounded-xl flex-1 min-h-[150px] overflow-hidden"
+          >
             <PanelTitle title="Agentes Activos" />
-            <div className="space-y-2 lg:space-y-3 mt-2">
+            <div className="space-y-3 overflow-y-auto no-scrollbar max-h-[250px]">
               {['CYBERSECURITY', 'DEV AUTOPILOT', 'DATA ANALYST', 'RESEARCH'].map((agent, idx) => (
                 <div key={agent} className="flex justify-between items-center text-[8px] lg:text-[9px] font-bold tracking-widest border-b border-cyan-900/50 pb-2">
                   <span className="flex items-center gap-2 lg:gap-3 text-cyan-100">
@@ -480,7 +486,7 @@ function App() {
                 </div>
               ))}
             </div>
-          </div>
+          </motion.div>
 
         </div>
       </main>
